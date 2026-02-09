@@ -69,8 +69,12 @@ class TestPyannoteDiarizerDiarize:
             (mock_turn2, None, "SPEAKER_01"),
         ]
 
+        # pyannote 4.x wraps annotation in DiarizeOutput with .speaker_diarization
+        mock_diarize_output = MagicMock()
+        mock_diarize_output.speaker_diarization = mock_annotation
+
         mock_pipeline = MagicMock()
-        mock_pipeline.return_value = mock_annotation
+        mock_pipeline.return_value = mock_diarize_output
         mock_pipeline_cls.from_pretrained.return_value = mock_pipeline
 
         config = DiarizerConfig()
@@ -167,7 +171,7 @@ class TestPyannoteDiarizerHfToken:
         d.load_model()
 
         call_kwargs = mock_pipeline_cls.from_pretrained.call_args
-        assert call_kwargs.kwargs.get("use_auth_token") == "hf_test_token_123"
+        assert call_kwargs.kwargs.get("token") == "hf_test_token_123"
 
     @patch("stt.core.diarizer.Pipeline")
     def test_no_hf_token_no_auth(
@@ -180,7 +184,7 @@ class TestPyannoteDiarizerHfToken:
         d.load_model()
 
         call_kwargs = mock_pipeline_cls.from_pretrained.call_args
-        assert "use_auth_token" not in (call_kwargs.kwargs or {})
+        assert "token" not in (call_kwargs.kwargs or {})
 
 
 class TestPyannoteDiarizerErrors:

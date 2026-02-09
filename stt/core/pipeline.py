@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from stt.core.aligner import align_segments
-from stt.core.audio import validate_audio_file
+from stt.core.audio import preprocess_audio, validate_audio_file
 from stt.core.diarizer import DiarizerConfig, PyannoteDiarizer
 from stt.core.transcriber import Transcriber, TranscriberConfig
 from stt.data_models import TranscriptMetadata, TranscriptResult
@@ -40,39 +40,46 @@ class TranscriptionPipeline:
         # 1. Validate audio
         validate_audio_file(Path(audio_path))
 
-        # 2. Transcribe: load, run, unload (free VRAM)
-        transcriber_config = TranscriberConfig(
-            model_size=self._config.model_size,
-            device=self._config.device,
-            compute_type=self._config.compute_type,
-            model_dir=self._config.model_dir,
-            language=self._config.language,
-        )
-        transcriber = Transcriber(transcriber_config)
-        transcriber.load_model()
-        segments = transcriber.transcribe(audio_path)
-        transcriber.unload_model()
+        # 2. Preprocess: convert to WAV 16kHz mono for whisper & pyannote
+        preprocessed = preprocess_audio(Path(audio_path))
+        preprocessed_path = str(preprocessed.path)
 
-        # 3. Diarize if enabled: load, run, unload (free VRAM)
-        num_speakers = 0
-        if self._config.diarization_enabled:
-            diarizer_config = DiarizerConfig(
-                num_speakers=self._config.num_speakers,
-                min_speakers=self._config.min_speakers,
-                max_speakers=self._config.max_speakers,
-                cache_dir=self._config.model_dir,
-                hf_token=self._config.hf_token,
+        try:
+            # 3. Transcribe: load, run, unload (free VRAM)
+            transcriber_config = TranscriberConfig(
+                model_size=self._config.model_size,
+                device=self._config.device,
+                compute_type=self._config.compute_type,
+                model_dir=self._config.model_dir,
+                language=self._config.language,
             )
-            diarizer = PyannoteDiarizer(diarizer_config)
-            diarizer.load_model()
-            diarization_result = diarizer.diarize(audio_path)
-            diarizer.unload_model()
+            transcriber = Transcriber(transcriber_config)
+            transcriber.load_model()
+            segments = transcriber.transcribe(preprocessed_path)
+            transcriber.unload_model()
 
-            # 4. Align segments with diarization
-            segments = align_segments(segments, diarization_result)
-            num_speakers = diarization_result.num_speakers
+            # 4. Diarize if enabled: load, run, unload (free VRAM)
+            num_speakers = 0
+            if self._config.diarization_enabled:
+                diarizer_config = DiarizerConfig(
+                    num_speakers=self._config.num_speakers,
+                    min_speakers=self._config.min_speakers,
+                    max_speakers=self._config.max_speakers,
+                    cache_dir=self._config.model_dir,
+                    hf_token=self._config.hf_token,
+                )
+                diarizer = PyannoteDiarizer(diarizer_config)
+                diarizer.load_model()
+                diarization_result = diarizer.diarize(preprocessed_path)
+                diarizer.unload_model()
 
-        # 5. Build result
+                # 5. Align segments with diarization
+                segments = align_segments(segments, diarization_result)
+                num_speakers = diarization_result.num_speakers
+        finally:
+            preprocessed.cleanup()
+
+        # 6. Build result
         elapsed = time.monotonic() - start_time
         duration = segments[-1].end if segments else 0.0
         metadata = TranscriptMetadata(
@@ -88,7 +95,7 @@ class TranscriptionPipeline:
             metadata=metadata, segments=segments,
         )
 
-        # 6. Export
+        # 7. Export
         resolved_dir = output_dir if output_dir is not None else self._config.output_dir
         export_transcript(result, self._config.formats, Path(resolved_dir))
 

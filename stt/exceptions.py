@@ -11,3 +11,7 @@ class GpuError(Exception):
 
 class ModelError(Exception):
     """Raised when model loading or inference fails."""
+
+
+class AudioPreprocessError(Exception):
+    """Raised when audio preprocessing (ffmpeg conversion) fails."""

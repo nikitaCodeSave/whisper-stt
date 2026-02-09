@@ -8,6 +8,14 @@ from stt.core.pipeline import PipelineConfig, TranscriptionPipeline
 from stt.data_models import Segment, TranscriptResult
 
 
+def _mock_preprocess(mock_preprocess: MagicMock) -> None:
+    """Configure a preprocess_audio mock to return a PreprocessedAudio-like object."""
+    mock_preprocessed = MagicMock()
+    mock_preprocessed.path = "/fake/preprocessed.wav"
+    mock_preprocessed.cleanup = MagicMock()
+    mock_preprocess.return_value = mock_preprocessed
+
+
 class TestPipelineConfig:
     def test_default_config(self) -> None:
         config = PipelineConfig()
@@ -39,15 +47,19 @@ class TestPipelineModelDir:
     @patch("stt.core.pipeline.align_segments")
     @patch("stt.core.pipeline.PyannoteDiarizer")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_model_dir_passed_to_transcriber_and_diarizer(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_diarizer_cls: MagicMock,
         mock_align: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),
@@ -82,13 +94,17 @@ class TestPipelineModelDir:
 class TestPipelineLanguagePassthrough:
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_language_passed_to_transcriber_config(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),
@@ -104,13 +120,17 @@ class TestPipelineLanguagePassthrough:
 
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_default_language_ru_passed(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),
@@ -128,13 +148,17 @@ class TestPipelineLanguagePassthrough:
 class TestPipelineOutputDirOverride:
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_output_dir_override(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),
@@ -154,13 +178,17 @@ class TestPipelineOutputDirOverride:
 
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_no_output_dir_override_uses_config(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),
@@ -184,15 +212,19 @@ class TestPipelineFullRun:
     @patch("stt.core.pipeline.align_segments")
     @patch("stt.core.pipeline.PyannoteDiarizer")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_full_run_with_diarization(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_diarizer_cls: MagicMock,
         mock_align: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         # Setup transcriber mock
         mock_transcriber = MagicMock()
         segments = [
@@ -223,6 +255,9 @@ class TestPipelineFullRun:
         # Verify audio validation
         mock_validate.assert_called_once()
 
+        # Verify preprocessing
+        mock_preprocess.assert_called_once()
+
         # Verify transcriber lifecycle
         mock_transcriber.load_model.assert_called_once()
         mock_transcriber.transcribe.assert_called_once()
@@ -241,21 +276,29 @@ class TestPipelineFullRun:
         assert result.segments == aligned
         assert result.metadata.diarization is True
         assert result.metadata.num_speakers == 2
+        # source_file should be original path, not preprocessed
+        assert result.metadata.source_file == "/fake/audio.wav"
+
+        # Verify cleanup was called
+        mock_preprocess.return_value.cleanup.assert_called_once()
 
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.align_segments")
     @patch("stt.core.pipeline.PyannoteDiarizer")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_sequential_vram_management(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_diarizer_cls: MagicMock,
         mock_align: MagicMock,
         mock_export: MagicMock,
     ) -> None:
         """Verify unload is called BEFORE next load for VRAM."""
+        _mock_preprocess(mock_preprocess)
         call_order: list[str] = []
 
         mock_transcriber = MagicMock()
@@ -312,14 +355,18 @@ class TestPipelineNoDiarize:
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.PyannoteDiarizer")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_no_diarize_skips_diarizer(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_diarizer_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         segments = [Segment(start=0.0, end=2.0, text="Hello")]
         mock_transcriber.transcribe.return_value = segments
@@ -343,13 +390,17 @@ class TestPipelineNoDiarize:
 class TestPipelineResult:
     @patch("stt.core.pipeline.export_transcript")
     @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
     @patch("stt.core.pipeline.validate_audio_file")
     def test_returns_transcript_result(
         self,
         mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
         mock_transcriber_cls: MagicMock,
         mock_export: MagicMock,
     ) -> None:
+        _mock_preprocess(mock_preprocess)
+
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = [
             Segment(start=0.0, end=2.0, text="Test"),

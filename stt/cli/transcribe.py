@@ -10,7 +10,7 @@ import typer
 from stt.config import build_pipeline_config, load_config, resolve_config
 from stt.core.audio import validate_audio_file
 from stt.core.pipeline import TranscriptionPipeline
-from stt.exceptions import AudioValidationError, GpuError, ModelError
+from stt.exceptions import AudioPreprocessError, AudioValidationError, GpuError, ModelError
 from stt.exit_codes import ExitCode
 
 
@@ -119,6 +119,9 @@ def transcribe_cmd(
     try:
         pipeline = TranscriptionPipeline(config)
         pipeline.run(str(audio_file))
+    except AudioPreprocessError as e:
+        typer.echo(f"Audio preprocessing error: {e}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR_FILE) from None
     except GpuError as e:
         typer.echo(f"GPU error: {e}", err=True)
         raise typer.Exit(code=ExitCode.ERROR_GPU) from None
