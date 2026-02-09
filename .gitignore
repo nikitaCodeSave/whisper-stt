@@ -34,7 +34,8 @@ Thumbs.db
 .env
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/rules/
 
 # Project: models (3+ GB)
 models/
