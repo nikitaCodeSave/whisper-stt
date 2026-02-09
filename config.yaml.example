@@ -1,0 +1,30 @@
+# STT Service configuration
+# Copy this file to config.yaml and adjust as needed.
+# Priority: CLI flags > environment variables > config.yaml > defaults
+
+# Whisper model: tiny, base, small, medium, large-v3, large-v3-turbo
+model: large-v3
+
+# Audio language: ru, en, auto
+language: ru
+
+# Output format(s): json, txt, srt (comma-separated for multiple)
+format: json
+
+# Device: cuda, cpu
+device: cuda
+
+# Compute type: float16, int8_float16, int8
+compute_type: float16
+
+# Output directory for transcription results
+output_dir: .
+
+# Directory for model storage (overridden by STT_MODEL_DIR env var)
+model_dir: models
+
+# Speaker diarization settings
+diarization:
+  enabled: true
+  min_speakers: 1
+  max_speakers: 8
