@@ -135,6 +135,49 @@ class TestTranscribeYamlCascade:
         assert config.language == "de"
 
 
+class TestTranscribeErrorHandling:
+    @patch("stt.cli.transcribe.TranscriptionPipeline")
+    def test_cuda_oom_returns_error_oom(
+        self, mock_pipeline_cls: MagicMock, tmp_path: Path,
+    ) -> None:
+        from stt.exceptions import CudaOomError
+
+        audio = tmp_path / "test.wav"
+        audio.write_bytes(b"\x00" * 100)
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.side_effect = CudaOomError("out of memory")
+        mock_pipeline_cls.return_value = mock_pipeline
+        result = runner.invoke(app, ["transcribe", str(audio), "--no-diarize"])
+        assert result.exit_code == 6  # ERROR_OOM
+
+    @patch("stt.cli.transcribe.TranscriptionPipeline")
+    def test_transcription_error_returns_general(
+        self, mock_pipeline_cls: MagicMock, tmp_path: Path,
+    ) -> None:
+        from stt.exceptions import TranscriptionError
+
+        audio = tmp_path / "test.wav"
+        audio.write_bytes(b"\x00" * 100)
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.side_effect = TranscriptionError("inference failed")
+        mock_pipeline_cls.return_value = mock_pipeline
+        result = runner.invoke(app, ["transcribe", str(audio), "--no-diarize"])
+        assert result.exit_code == 1  # ERROR_GENERAL
+
+    @patch("stt.cli.transcribe.TranscriptionPipeline")
+    def test_unexpected_error_shows_type_name(
+        self, mock_pipeline_cls: MagicMock, tmp_path: Path,
+    ) -> None:
+        audio = tmp_path / "test.wav"
+        audio.write_bytes(b"\x00" * 100)
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.side_effect = ValueError("unexpected")
+        mock_pipeline_cls.return_value = mock_pipeline
+        result = runner.invoke(app, ["transcribe", str(audio), "--no-diarize"])
+        assert result.exit_code == 1
+        assert "ValueError" in result.output
+
+
 class TestTranscribeNoDiarize:
     @patch("stt.cli.transcribe.TranscriptionPipeline")
     def test_no_diarize_flag_accepted(

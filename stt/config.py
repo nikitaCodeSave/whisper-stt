@@ -29,6 +29,12 @@ class SttConfig:
     output_dir: str = "."
     model_dir: str = "models"
     hf_token: str | None = None
+    batch_size: int = 8
+    vad_filter: bool = True
+    condition_on_previous_text: bool = False
+    hallucination_silence_threshold: float = 2.0
+    use_subprocess: bool = False
+    use_batched: bool = False
 
     def with_overrides(self, **kwargs: Any) -> SttConfig:
         return replace(self, **kwargs)
@@ -65,6 +71,7 @@ def load_config(path: Path | None = None) -> SttConfig:
         data = yaml.safe_load(f) or {}
 
     diarization = data.pop("diarization", None)
+    whisper = data.pop("whisper", None)
     kwargs: dict[str, Any] = {}
 
     for key in (
@@ -86,6 +93,17 @@ def load_config(path: Path | None = None) -> SttConfig:
             kwargs["min_speakers"] = diarization["min_speakers"]
         if "max_speakers" in diarization:
             kwargs["max_speakers"] = diarization["max_speakers"]
+
+    if isinstance(whisper, dict):
+        for key in (
+            "batch_size",
+            "vad_filter",
+            "condition_on_previous_text",
+            "hallucination_silence_threshold",
+            "use_batched",
+        ):
+            if key in whisper:
+                kwargs[key] = whisper[key]
 
     return _apply_env_overrides(SttConfig(**kwargs))
 
@@ -152,4 +170,10 @@ def build_pipeline_config(
         output_dir=config.output_dir,
         model_dir=config.model_dir,
         hf_token=config.hf_token,
+        batch_size=config.batch_size,
+        vad_filter=config.vad_filter,
+        condition_on_previous_text=config.condition_on_previous_text,
+        hallucination_silence_threshold=config.hallucination_silence_threshold,
+        use_subprocess=config.use_subprocess,
+        use_batched=config.use_batched,
     )

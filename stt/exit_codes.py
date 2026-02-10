@@ -10,4 +10,5 @@ class ExitCode(IntEnum):
     ERROR_FILE = 3
     ERROR_MODEL = 4
     ERROR_GPU = 5
+    ERROR_OOM = 6
     PARTIAL_SUCCESS = 10

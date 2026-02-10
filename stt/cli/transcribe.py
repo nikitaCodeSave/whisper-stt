@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -10,8 +11,18 @@ import typer
 from stt.config import build_pipeline_config, load_config, resolve_config
 from stt.core.audio import validate_audio_file
 from stt.core.pipeline import TranscriptionPipeline
-from stt.exceptions import AudioPreprocessError, AudioValidationError, GpuError, ModelError
+from stt.exceptions import (
+    AudioPreprocessError,
+    AudioValidationError,
+    CudaOomError,
+    DiarizationError,
+    GpuError,
+    ModelError,
+    TranscriptionError,
+)
 from stt.exit_codes import ExitCode
+
+logger = logging.getLogger(__name__)
 
 
 def transcribe_cmd(
@@ -80,6 +91,20 @@ def transcribe_cmd(
             help="Directory for model storage.",
         ),
     ] = None,
+    subprocess_isolation: Annotated[
+        bool,
+        typer.Option(
+            "--subprocess-isolation",
+            help="Run ML inference in subprocesses for full GPU memory isolation.",
+        ),
+    ] = False,
+    batched: Annotated[
+        bool,
+        typer.Option(
+            "--batched",
+            help="Use batched inference (faster for long audio, coarser segmentation).",
+        ),
+    ] = False,
 ) -> None:
     """Transcribe a single audio file."""
     # Validate audio file
@@ -114,6 +139,10 @@ def transcribe_cmd(
         max_speakers=max_speakers,
         no_diarize=no_diarize,
     )
+    if subprocess_isolation:
+        stt_config = stt_config.with_overrides(use_subprocess=True)
+    if batched:
+        stt_config = stt_config.with_overrides(use_batched=True)
     config = build_pipeline_config(stt_config, num_speakers=num_speakers)
 
     try:
@@ -122,12 +151,21 @@ def transcribe_cmd(
     except AudioPreprocessError as e:
         typer.echo(f"Audio preprocessing error: {e}", err=True)
         raise typer.Exit(code=ExitCode.ERROR_FILE) from None
+    except CudaOomError as e:
+        logger.error("CUDA out of memory: %s", e, exc_info=True)
+        typer.echo(f"CUDA out of memory: {e}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR_OOM) from None
     except GpuError as e:
         typer.echo(f"GPU error: {e}", err=True)
         raise typer.Exit(code=ExitCode.ERROR_GPU) from None
     except ModelError as e:
         typer.echo(f"Model error: {e}", err=True)
         raise typer.Exit(code=ExitCode.ERROR_MODEL) from None
-    except Exception as e:
+    except (TranscriptionError, DiarizationError) as e:
+        logger.error("Inference error: %s", e, exc_info=True)
         typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR_GENERAL) from None
+    except Exception as e:
+        logger.error("Unexpected error (%s): %s", type(e).__name__, e, exc_info=True)
+        typer.echo(f"Error ({type(e).__name__}): {e}", err=True)
         raise typer.Exit(code=ExitCode.ERROR_GENERAL) from None

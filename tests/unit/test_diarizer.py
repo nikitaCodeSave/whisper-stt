@@ -199,11 +199,10 @@ class TestPyannoteDiarizerErrors:
 
 
 class TestPyannoteDiarizerLifecycle:
-    @patch("stt.core.diarizer.torch")
+    @patch("stt.core.diarizer.cleanup_gpu_memory")
     @patch("stt.core.diarizer.Pipeline")
-    def test_load_unload(self, mock_pipeline_cls: MagicMock, mock_torch: MagicMock) -> None:
+    def test_load_unload(self, mock_pipeline_cls: MagicMock, mock_cleanup: MagicMock) -> None:
         mock_pipeline_cls.from_pretrained.return_value = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
 
         config = DiarizerConfig()
         d = PyannoteDiarizer(config)
@@ -212,40 +211,38 @@ class TestPyannoteDiarizerLifecycle:
 
         d.unload_model()
         assert d._pipeline is None
-        mock_torch.cuda.empty_cache.assert_called_once()
+        mock_cleanup.assert_called_once_with("diarizer_unload")
 
-    @patch("stt.core.diarizer.torch")
+    @patch("stt.core.diarizer.cleanup_gpu_memory")
     @patch("stt.core.diarizer.Pipeline")
-    def test_unload_calls_empty_cache_when_cuda_available(
-        self, mock_pipeline_cls: MagicMock, mock_torch: MagicMock,
+    def test_unload_calls_cleanup_gpu_memory(
+        self, mock_pipeline_cls: MagicMock, mock_cleanup: MagicMock,
     ) -> None:
         mock_pipeline_cls.from_pretrained.return_value = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
 
         config = DiarizerConfig()
         d = PyannoteDiarizer(config)
         d.load_model()
         d.unload_model()
 
-        mock_torch.cuda.empty_cache.assert_called_once()
-
-    @patch("stt.core.diarizer.torch")
-    @patch("stt.core.diarizer.Pipeline")
-    def test_unload_skips_empty_cache_when_no_cuda(
-        self, mock_pipeline_cls: MagicMock, mock_torch: MagicMock,
-    ) -> None:
-        mock_pipeline_cls.from_pretrained.return_value = MagicMock()
-        mock_torch.cuda.is_available.return_value = False
-
-        config = DiarizerConfig()
-        d = PyannoteDiarizer(config)
-        d.load_model()
-        d.unload_model()
-
-        mock_torch.cuda.empty_cache.assert_not_called()
+        mock_cleanup.assert_called_once_with("diarizer_unload")
 
     def test_diarize_without_load_raises(self) -> None:
         config = DiarizerConfig()
         d = PyannoteDiarizer(config)
         with pytest.raises(RuntimeError):
             d.diarize("/fake/audio.wav")
+
+
+class TestPyannoteDiarizerCleanup:
+    @patch("stt.core.diarizer.cleanup_gpu_memory")
+    @patch("stt.core.diarizer.Pipeline")
+    def test_unload_calls_cleanup_gpu_memory(
+        self, mock_pipeline_cls: MagicMock, mock_cleanup: MagicMock,
+    ) -> None:
+        mock_pipeline_cls.from_pretrained.return_value = MagicMock()
+        config = DiarizerConfig()
+        d = PyannoteDiarizer(config)
+        d.load_model()
+        d.unload_model()
+        mock_cleanup.assert_called_once_with("diarizer_unload")

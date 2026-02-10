@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import gc
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+import torch
 
 from stt.core.audio import SUPPORTED_EXTENSIONS
 from stt.core.pipeline import PipelineConfig, TranscriptionPipeline
 from stt.exit_codes import ExitCode
+
+logger = logging.getLogger(__name__)
 
 
 def discover_audio_files(
@@ -102,6 +108,7 @@ class BatchRunner:
                     continue
 
             # Run pipeline with per-file output_dir
+            needs_cleanup = False
             try:
                 pipeline.run(
                     str(audio_file),
@@ -111,6 +118,12 @@ class BatchRunner:
             except Exception as e:
                 failed += 1
                 errors.append((audio_file, str(e)))
+                logger.error("Failed %s: %s", audio_file, e, exc_info=True)
+                needs_cleanup = True
+            if needs_cleanup:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         return BatchResult(
             total=len(files),

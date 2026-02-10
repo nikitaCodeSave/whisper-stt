@@ -218,3 +218,31 @@ class TestBatchRunnerPipelineReuse:
 
         call_kwargs = mock_pipeline.run.call_args
         assert call_kwargs.kwargs.get("output_dir") == str(output_dir)
+
+
+class TestBatchRunnerVramCleanup:
+    @patch("stt.core.batch.torch")
+    @patch("stt.core.batch.gc")
+    @patch("stt.core.batch.TranscriptionPipeline")
+    def test_vram_cleanup_on_failure(
+        self,
+        mock_pipeline_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_torch: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_torch.cuda.is_available.return_value = True
+        files = [tmp_path / "a.mp3"]
+        files[0].write_bytes(b"\x00" * 10)
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.side_effect = Exception("crash")
+        mock_pipeline_cls.return_value = mock_pipeline
+
+        config = PipelineConfig()
+        runner_obj = BatchRunner(config, skip_existing=False)
+        result = runner_obj.run(files, tmp_path / "output")
+
+        assert result.failed == 1
+        mock_gc.collect.assert_called_once()
+        mock_torch.cuda.empty_cache.assert_called_once()

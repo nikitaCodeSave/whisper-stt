@@ -15,3 +15,15 @@ class ModelError(Exception):
 
 class AudioPreprocessError(Exception):
     """Raised when audio preprocessing (ffmpeg conversion) fails."""
+
+
+class TranscriptionError(Exception):
+    """Raised when Whisper inference fails."""
+
+
+class DiarizationError(Exception):
+    """Raised when pyannote diarization inference fails."""
+
+
+class CudaOomError(GpuError):
+    """Raised when CUDA runs out of memory."""

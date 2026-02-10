@@ -70,7 +70,7 @@ def preprocess_audio(source: Path) -> PreprocessedAudio:
     ]
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             timeout=_FFMPEG_TIMEOUT,
@@ -87,7 +87,13 @@ def preprocess_audio(source: Path) -> PreprocessedAudio:
             f"ffmpeg timed out after {_FFMPEG_TIMEOUT}s while converting {source.name}"
         ) from None
     else:
-        # Check for non-zero exit or missing/empty output
+        if result.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            stderr_msg = result.stderr.decode(errors="replace")[:200]
+            raise AudioPreprocessError(
+                f"ffmpeg failed (code {result.returncode}) converting "
+                f"{source.name}: {stderr_msg}"
+            )
         if not tmp_path.exists() or tmp_path.stat().st_size == 0:
             tmp_path.unlink(missing_ok=True)
             raise AudioPreprocessError(

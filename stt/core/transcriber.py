@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from faster_whisper import WhisperModel
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
+from stt.core.gpu_utils import cleanup_gpu_memory
 from stt.data_models import Segment
-from stt.exceptions import GpuError, ModelError
+from stt.exceptions import CudaOomError, GpuError, ModelError, TranscriptionError
 
 
 def _map_confidence(avg_logprob: float) -> float:
@@ -26,12 +27,18 @@ class TranscriberConfig:
     compute_type: str = "float16"
     model_dir: str | None = None
     language: str = "ru"
+    batch_size: int = 8
+    vad_filter: bool = True
+    condition_on_previous_text: bool = False
+    hallucination_silence_threshold: float = 2.0
+    use_batched: bool = False
 
 
 class Transcriber:
     def __init__(self, config: TranscriberConfig) -> None:
         self._config = config
         self._model: WhisperModel | None = None
+        self._batched: BatchedInferencePipeline | None = None
 
     def load_model(self) -> None:
         if self._config.device == "cuda" and not torch.cuda.is_available():
@@ -49,26 +56,66 @@ class Transcriber:
                 self._config.model_size,
                 **kwargs,
             )
+            self._batched = BatchedInferencePipeline(model=self._model)
         except Exception as e:
             raise ModelError(f"Failed to load model: {e}") from e
 
     def unload_model(self) -> None:
+        self._batched = None
         self._model = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        cleanup_gpu_memory("transcriber_unload")
 
     def transcribe(self, audio_path: str) -> list[Segment]:
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        segments_iter, _info = self._model.transcribe(audio_path, language=self._config.language)
-        result = []
-        for seg in segments_iter:
-            result.append(
-                Segment(
-                    start=seg.start,
-                    end=seg.end,
-                    text=seg.text.strip(),
-                    confidence=_map_confidence(seg.avg_logprob),
+        try:
+            if self._config.use_batched:
+                if self._batched is None:
+                    raise RuntimeError("Model not loaded. Call load_model() first.")
+                segments_iter, _info = self._batched.transcribe(
+                    audio_path,
+                    language=self._config.language,
+                    batch_size=self._config.batch_size,
+                    # without_timestamps=False is required so that the model
+                    # generates timestamp tokens; otherwise the entire VAD
+                    # chunk is returned as a single segment.
+                    without_timestamps=False,
+                    vad_filter=self._config.vad_filter,
+                    vad_parameters={"min_silence_duration_ms": 500},
+                    condition_on_previous_text=(
+                        self._config.condition_on_previous_text
+                    ),
+                    hallucination_silence_threshold=(
+                        self._config.hallucination_silence_threshold
+                    ),
                 )
-            )
-        return sorted(result, key=lambda s: s.start)
+            else:
+                segments_iter, _info = self._model.transcribe(
+                    audio_path,
+                    language=self._config.language,
+                    vad_filter=self._config.vad_filter,
+                    vad_parameters={"min_silence_duration_ms": 500},
+                    condition_on_previous_text=(
+                        self._config.condition_on_previous_text
+                    ),
+                    hallucination_silence_threshold=(
+                        self._config.hallucination_silence_threshold
+                    ),
+                )
+            result = []
+            for seg in segments_iter:
+                result.append(
+                    Segment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=seg.text.strip(),
+                        confidence=_map_confidence(seg.avg_logprob),
+                    )
+                )
+        except torch.cuda.OutOfMemoryError as e:
+            raise CudaOomError(f"CUDA OOM during transcription: {e}") from e
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise CudaOomError(f"CUDA OOM during transcription: {e}") from e
+            raise TranscriptionError(f"Transcription failed: {e}") from e
+        return result

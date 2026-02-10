@@ -8,6 +8,7 @@ from stt import __version__
 from stt.cli.batch import batch_cmd
 from stt.cli.models_cmd import models_app
 from stt.cli.transcribe import transcribe_cmd
+from stt.core.gpu_utils import configure_cuda_allocator
 
 app = typer.Typer(
     name="stt",
@@ -34,6 +35,7 @@ def main(
     ),
 ) -> None:
     """Local STT service with speaker diarization."""
+    configure_cuda_allocator()
 
 
 app.command("transcribe")(transcribe_cmd)

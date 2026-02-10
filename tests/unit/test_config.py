@@ -1,5 +1,7 @@
 """Tests for SttConfig, load_config(), resolve_config(), build_pipeline_config()."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
@@ -321,3 +323,65 @@ class TestBuildPipelineConfig:
         cfg = SttConfig()
         pc = build_pipeline_config(cfg)
         assert pc.hf_token is None
+
+
+class TestSttConfigBatchParams:
+    def test_default_batch_size_is_8(self) -> None:
+        cfg = SttConfig()
+        assert cfg.batch_size == 8
+
+    def test_default_vad_filter(self) -> None:
+        cfg = SttConfig()
+        assert cfg.vad_filter is True
+
+    def test_default_condition_on_previous_text(self) -> None:
+        cfg = SttConfig()
+        assert cfg.condition_on_previous_text is False
+
+    def test_default_hallucination_silence_threshold(self) -> None:
+        cfg = SttConfig()
+        assert cfg.hallucination_silence_threshold == 2.0
+
+    def test_default_use_subprocess(self) -> None:
+        cfg = SttConfig()
+        assert cfg.use_subprocess is False
+
+    def test_default_use_batched_is_false(self) -> None:
+        cfg = SttConfig()
+        assert cfg.use_batched is False
+
+    def test_yaml_whisper_section_loaded(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "whisper:\n"
+            "  batch_size: 16\n"
+            "  vad_filter: false\n"
+            "  condition_on_previous_text: true\n"
+            "  hallucination_silence_threshold: 3.0\n"
+        )
+        cfg = load_config(config_file)
+        assert cfg.batch_size == 16
+        assert cfg.vad_filter is False
+        assert cfg.condition_on_previous_text is True
+        assert cfg.hallucination_silence_threshold == 3.0
+
+    def test_build_pipeline_config_threads_batch_params(self) -> None:
+        cfg = SttConfig(batch_size=16, vad_filter=False, hallucination_silence_threshold=3.0)
+        pc = build_pipeline_config(cfg)
+        assert pc.batch_size == 16
+        assert pc.vad_filter is False
+        assert pc.hallucination_silence_threshold == 3.0
+
+    def test_yaml_whisper_use_batched_loaded(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "whisper:\n"
+            "  use_batched: true\n"
+        )
+        cfg = load_config(config_file)
+        assert cfg.use_batched is True
+
+    def test_build_pipeline_config_threads_use_batched(self) -> None:
+        cfg = SttConfig(use_batched=True)
+        pc = build_pipeline_config(cfg)
+        assert pc.use_batched is True

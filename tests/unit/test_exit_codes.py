@@ -39,4 +39,7 @@ class TestExitCodeUsableAsInt:
         assert int(ExitCode.ERROR_GENERAL) == 1
 
     def test_all_members_count(self) -> None:
-        assert len(ExitCode) == 7
+        assert len(ExitCode) == 8
+
+    def test_error_oom_value(self) -> None:
+        assert ExitCode.ERROR_OOM == 6

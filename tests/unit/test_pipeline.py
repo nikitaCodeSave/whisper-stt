@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from stt.core.pipeline import PipelineConfig, TranscriptionPipeline
 from stt.data_models import Segment, TranscriptResult
 
@@ -30,6 +32,11 @@ class TestPipelineConfig:
         assert config.formats == "json"
         assert config.output_dir == "."
         assert config.model_dir is None
+        assert config.batch_size == 8
+        assert config.vad_filter is True
+        assert config.condition_on_previous_text is False
+        assert config.hallucination_silence_threshold == 2.0
+        assert config.use_subprocess is False
 
     def test_custom_config(self) -> None:
         config = PipelineConfig(
@@ -89,6 +96,60 @@ class TestPipelineModelDir:
         # Verify DiarizerConfig got cache_dir
         diarizer_config = mock_diarizer_cls.call_args[0][0]
         assert diarizer_config.cache_dir == "/custom/models"
+
+
+class TestPipelineUseBatched:
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_use_batched_passed_to_transcriber_config(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_export: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.return_value = [
+            Segment(start=0.0, end=2.0, text="Test"),
+        ]
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        config = PipelineConfig(diarization_enabled=False, use_batched=True)
+        pipeline = TranscriptionPipeline(config)
+        pipeline.run("/fake/audio.wav")
+
+        transcriber_config = mock_transcriber_cls.call_args[0][0]
+        assert transcriber_config.use_batched is True
+
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_default_use_batched_false_passed(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_export: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.return_value = [
+            Segment(start=0.0, end=2.0, text="Test"),
+        ]
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        config = PipelineConfig(diarization_enabled=False)
+        pipeline = TranscriptionPipeline(config)
+        pipeline.run("/fake/audio.wav")
+
+        transcriber_config = mock_transcriber_cls.call_args[0][0]
+        assert transcriber_config.use_batched is False
 
 
 class TestPipelineLanguagePassthrough:
@@ -415,3 +476,181 @@ class TestPipelineResult:
         assert result.metadata.source_file == "/fake/audio.wav"
         assert result.metadata.model == "large-v3"
         assert result.metadata.language == "ru"
+
+
+class TestPipelineTryFinally:
+    @patch("stt.core.pipeline.cleanup_gpu_memory")
+    @patch("stt.core.pipeline.log_gpu_memory")
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_transcriber_unloaded_on_transcribe_failure(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_export: MagicMock,
+        mock_log_gpu: MagicMock,
+        mock_cleanup_gpu: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = RuntimeError("inference crash")
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        config = PipelineConfig(diarization_enabled=False)
+        pipeline = TranscriptionPipeline(config)
+        with pytest.raises(RuntimeError):
+            pipeline.run("/fake/audio.wav")
+
+        mock_transcriber.unload_model.assert_called_once()
+
+    @patch("stt.core.pipeline.cleanup_gpu_memory")
+    @patch("stt.core.pipeline.log_gpu_memory")
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.align_segments")
+    @patch("stt.core.pipeline.PyannoteDiarizer")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_diarizer_unloaded_on_diarize_failure(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_diarizer_cls: MagicMock,
+        mock_align: MagicMock,
+        mock_export: MagicMock,
+        mock_log_gpu: MagicMock,
+        mock_cleanup_gpu: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.return_value = [
+            Segment(start=0.0, end=2.0, text="Test"),
+        ]
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        mock_diarizer = MagicMock()
+        mock_diarizer.diarize.side_effect = RuntimeError("diarize crash")
+        mock_diarizer_cls.return_value = mock_diarizer
+
+        config = PipelineConfig(diarization_enabled=True)
+        pipeline = TranscriptionPipeline(config)
+        with pytest.raises(RuntimeError):
+            pipeline.run("/fake/audio.wav")
+
+        mock_diarizer.unload_model.assert_called_once()
+        mock_transcriber.unload_model.assert_called_once()
+
+    @patch("stt.core.pipeline.cleanup_gpu_memory")
+    @patch("stt.core.pipeline.log_gpu_memory")
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_unload_failure_doesnt_mask_original_error(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_export: MagicMock,
+        mock_log_gpu: MagicMock,
+        mock_cleanup_gpu: MagicMock,
+    ) -> None:
+        from stt.exceptions import TranscriptionError
+
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = TranscriptionError("inference error")
+        mock_transcriber.unload_model.side_effect = RuntimeError("unload failed")
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        config = PipelineConfig(diarization_enabled=False)
+        pipeline = TranscriptionPipeline(config)
+        with pytest.raises(TranscriptionError):
+            pipeline.run("/fake/audio.wav")
+
+
+class TestPipelineGpuMonitoring:
+    @patch("stt.core.pipeline.cleanup_gpu_memory")
+    @patch("stt.core.pipeline.log_gpu_memory")
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.align_segments")
+    @patch("stt.core.pipeline.PyannoteDiarizer")
+    @patch("stt.core.pipeline.Transcriber")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_gpu_memory_logged_at_stages(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_transcriber_cls: MagicMock,
+        mock_diarizer_cls: MagicMock,
+        mock_align: MagicMock,
+        mock_export: MagicMock,
+        mock_log_gpu: MagicMock,
+        mock_cleanup_gpu: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.return_value = [
+            Segment(start=0.0, end=2.0, text="Test"),
+        ]
+        mock_transcriber_cls.return_value = mock_transcriber
+
+        mock_diarizer = MagicMock()
+        mock_result = MagicMock()
+        mock_result.num_speakers = 1
+        mock_diarizer.diarize.return_value = mock_result
+        mock_diarizer_cls.return_value = mock_diarizer
+
+        mock_align.return_value = [
+            Segment(start=0.0, end=2.0, text="Test", speaker="S0"),
+        ]
+
+        config = PipelineConfig(diarization_enabled=True)
+        pipeline = TranscriptionPipeline(config)
+        pipeline.run("/fake/audio.wav")
+
+        log_labels = [call.args[0] for call in mock_log_gpu.call_args_list]
+        assert "before_transcriber_load" in log_labels
+        assert "after_transcriber_load" in log_labels
+        assert "before_diarizer_load" in log_labels
+        assert "after_diarizer_load" in log_labels
+
+        cleanup_labels = [call.args[0] for call in mock_cleanup_gpu.call_args_list]
+        assert "after_transcriber_unload" in cleanup_labels
+        assert "after_diarizer_unload" in cleanup_labels
+
+
+class TestPipelineSubprocess:
+    @patch("stt.core.pipeline.cleanup_gpu_memory")
+    @patch("stt.core.pipeline.log_gpu_memory")
+    @patch("stt.core.pipeline.export_transcript")
+    @patch("stt.core.pipeline.run_transcription_subprocess")
+    @patch("stt.core.pipeline.preprocess_audio")
+    @patch("stt.core.pipeline.validate_audio_file")
+    def test_use_subprocess_flag_routes_to_subprocess_runner(
+        self,
+        mock_validate: MagicMock,
+        mock_preprocess: MagicMock,
+        mock_run_sub: MagicMock,
+        mock_export: MagicMock,
+        mock_log_gpu: MagicMock,
+        mock_cleanup_gpu: MagicMock,
+    ) -> None:
+        _mock_preprocess(mock_preprocess)
+        mock_run_sub.return_value = [Segment(start=0.0, end=2.0, text="Test")]
+
+        config = PipelineConfig(diarization_enabled=False, use_subprocess=True)
+        pipeline = TranscriptionPipeline(config)
+        result = pipeline.run("/fake/audio.wav")
+
+        mock_run_sub.assert_called_once()
+        assert isinstance(result, TranscriptResult)

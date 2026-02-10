@@ -10,7 +10,8 @@ from typing import Any
 import torch
 from pyannote.audio import Pipeline
 
-from stt.exceptions import ModelError
+from stt.core.gpu_utils import cleanup_gpu_memory
+from stt.exceptions import CudaOomError, DiarizationError, ModelError
 
 
 @dataclass
@@ -66,8 +67,7 @@ class PyannoteDiarizer:
 
     def unload_model(self) -> None:
         self._pipeline = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        cleanup_gpu_memory("diarizer_unload")
 
     def diarize(self, audio_path: str) -> DiarizationResult:
         if self._pipeline is None:
@@ -78,7 +78,14 @@ class PyannoteDiarizer:
         else:
             kwargs["min_speakers"] = self._config.min_speakers
             kwargs["max_speakers"] = self._config.max_speakers
-        result = self._pipeline(audio_path, **kwargs)
+        try:
+            result = self._pipeline(audio_path, **kwargs)
+        except torch.cuda.OutOfMemoryError as e:
+            raise CudaOomError(f"CUDA OOM during diarization: {e}") from e
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise CudaOomError(f"CUDA OOM during diarization: {e}") from e
+            raise DiarizationError(f"Diarization failed: {e}") from e
         # pyannote 4.x returns DiarizeOutput; extract Annotation from it
         annotation = getattr(result, "speaker_diarization", result)
         turns: list[DiarizationTurn] = []

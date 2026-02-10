@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from stt.core.audio import PreprocessedAudio, preprocess_audio
+from stt.core.audio import preprocess_audio
 from stt.exceptions import AudioPreprocessError
 
 
@@ -64,11 +64,11 @@ class TestPreprocessAudio:
     def test_ffmpeg_failure_raises_error(
         self, mock_run: patch, minimal_wav: Path,
     ) -> None:
-        # Simulate ffmpeg running but producing no output file
+        # Simulate ffmpeg running but returning non-zero exit code
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=1, stdout=b"", stderr=b"error",
         )
-        with pytest.raises(AudioPreprocessError, match="failed to convert"):
+        with pytest.raises(AudioPreprocessError, match="ffmpeg failed"):
             preprocess_audio(minimal_wav)
 
     @patch("stt.core.audio.subprocess.run")
@@ -90,3 +90,26 @@ class TestPreprocessAudio:
         temp_files = list(minimal_wav.parent.glob("*.wav"))
         # Only the original minimal_wav should remain
         assert temp_files == [minimal_wav]
+
+
+class TestPreprocessFfmpegReturncode:
+    @patch("stt.core.audio.subprocess.run")
+    def test_ffmpeg_nonzero_returncode_raises(
+        self, mock_run: patch, minimal_wav: Path,
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"error converting file",
+        )
+        with pytest.raises(AudioPreprocessError, match="ffmpeg failed \\(code 1\\)"):
+            preprocess_audio(minimal_wav)
+
+    @patch("stt.core.audio.subprocess.run")
+    def test_ffmpeg_error_includes_stderr(
+        self, mock_run: patch, minimal_wav: Path,
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=2, stdout=b"",
+            stderr=b"Invalid data found when processing input",
+        )
+        with pytest.raises(AudioPreprocessError, match="Invalid data found"):
+            preprocess_audio(minimal_wav)
